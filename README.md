@@ -41,5 +41,5 @@ Press `` to enable/disable the moving‑average filter applied to each beam meas
 
 | Key | Function                                 |
 | --- | ---------------------------------------- |
-| ``  | Toggle the moving‑average filter on/off. |
+| `m`  | Toggle the moving‑average filter on/off. |
 |     |                                          |
