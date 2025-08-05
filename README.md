@@ -20,7 +20,7 @@ python tcp_sim.py
 
 A window opens showing the surface (black), TCP (red), laser beams (grey, terminating in green hit points) and orientation arrows (blue – tangent, red – normal).
 
-Press `` to enable/disable the moving‑average filter applied to each beam measurement.
+Press `m` to enable/disable the moving‑average filter applied to each beam measurement.
 
 ---
 
