@@ -1,4 +1,4 @@
-# Two‑Laser Surface‑Tracking Simulator
+# Robot Arm Surface‑Tracking Simulator
 
 ![alt text](image-1.png)
 
