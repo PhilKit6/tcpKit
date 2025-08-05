@@ -1,8 +1,7 @@
 # Robot Arm Surface‑Tracking Simulator
 
-<p align="center">
- ![](TCP.gif)
-</p>
+![](TCP.gif)
+
 
 This repository contains a Python/Matplotlib animation that demonstrates a **feed‑forward surface‑following strategy** for a robotic tool centre point (TCP).  Two forward‑looking laser range measurements are used to:
 
