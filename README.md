@@ -9,6 +9,8 @@ This repository contains a Python/Matplotlib animation that demonstrates a **fee
 2. Orient the TCP perpendicular to that surface (normal alignment).
 3. Maintain a constant stand‑off distance (`target_offset`) above the surface.
 
+The sensors are modeled as **rigidly mounted** to the TCP: their positions are a fixed transform in the TCP frame (constant lead along the tangent), and beams are emitted along the tool’s current **downward normal**. The pose estimated from the current beams is applied **next frame** (causal update), so geometry is rigid within each frame. The sim also auto‑resets after traversing the plotting range.
+
 ---
 
 ## Quick Start
@@ -41,118 +43,81 @@ Press `m` to enable/disable the moving‑average filter applied to each beam mea
 | Key | Function                                 |
 | --- | ---------------------------------------- |
 | `m`  | Toggle the moving‑average filter on/off. |
-|     |                                          |
 
 ## Underlying mathematics
-
-This section summarises the geometry used each frame and makes the **rigid sensor mounting** explicit.
 
 ### Symbols
 
 | Symbol | Meaning |
-|---|---|
-| $(x_T, z_T)$ | TCP position in the world $(x\!-\!z)$ plane |
-| $\hat{t}_k,\;\hat{n}_k$ | Unit **tangent** and **downward normal** at frame $k$ |
-| $d_1, d_2$ | Rigid leads from TCP to sensor 1 and 2 along $\hat{t}_k$ (e.g., 5 mm, 10 mm) |
-| $\mathbf{s}_{i,k}$ | Sensor-$i$ body position at frame $k$ |
-| $(x_i, z_i)$ | Filtered hit point of beam $i$ on the surface |
-| $m_k$ | Local surface slope (gradient) at frame $k$ |
-| $h_{\text{off}}$ | Desired stand-off (e.g., 5 mm) |
-| $z_{\text{cmd},k}$ | Commanded TCP height |
-
----
+| --- | --- |
+| `x_T, z_T` | TCP position in the world `(x‑z)` plane |
+| `t_hat_k, n_hat_k` | Unit **tangent** and **downward normal** at frame `k` |
+| `d1, d2` | Rigid leads from TCP to sensors 1 and 2 along `t_hat_k` (e.g., 5 mm and 10 mm) |
+| `s_i_k` | Sensor‑`i` body position at frame `k` |
+| `x1, z1 ; x2, z2` | Filtered beam hit points |
+| `a` | Local surface slope (gradient) at frame `k` |
+| `b` | Intercept of the local line at frame `k` |
+| `h_off` | Desired stand‑off distance |
+| `z_cmd_k` | Commanded TCP height at frame `k` |
 
 ### 1) Local line fit from two hits
 
-Given filtered hits $(x_1,z_1)$ and $(x_2,z_2)$ with $x_2>x_1$:
-\[
- z(x) = a x + b,\qquad
- a = \frac{z_2 - z_1}{x_2 - x_1},\qquad
- b = z_1 - a x_1.
-\]
-The **gradient** is $m_k \equiv a$.
-
----
+```
+a  = (z2 - z1) / (x2 - x1)      # slope (gradient)
+b  = z1 - a * x1                # intercept
+z(x) = a * x + b
+```
 
 ### 2) Tangent and (downward) normal
 
-\[
- \hat{t}_k = \frac{(1,\,m_k)}{\sqrt{1+m_k^2}}, \qquad
- \hat{n}_k = \frac{(m_k,\,-1)}{\sqrt{1+m_k^2}}, \;\; \text{with } (\hat{n}_k)_z<0.
-\]
+```
+t_hat_k = (1,  a) / sqrt(1 + a*a)
+n_hat_k = (a, -1) / sqrt(1 + a*a)    # choose sign so n_hat_k.z < 0 (toward surface)
+```
 
----
+### 3) **Rigid sensor kinematics** (TCP frame → world)
+Sensors are **rigidly mounted**: their positions are a fixed transform from the TCP along the current tangent.
 
-### 3) Rigid sensor kinematics (TCP frame → world)
+```
+s_1_k = [x_T, z_T] + d1 * t_hat_k
+s_2_k = [x_T, z_T] + d2 * t_hat_k
+```
 
-Sensors are fixed on the tool along the tangent at frame $k$:
-\[
- \mathbf{s}_{i,k} =
- \begin{bmatrix} x_T \\ z_T \end{bmatrix}
- + d_i\,\hat{t}_k, \qquad i\in\{1,2\}.
-\]
-Each beam is emitted **perpendicular to the tangent**, i.e. along $\hat{n}_k$.
+Beams are emitted **perpendicular** to the tangent (i.e., along `n_hat_k`).
 
----
+### 4) Beam–surface intersection (closed‑form on the fitted line)
+Parameterise the beam from sensor `i`:
 
-### 4) Beam–surface intersection (closed-form on the fitted line)
+```
+p_i(r) = s_i_k + r * n_hat_k,   r >= 0
+```
 
-Beam from sensor $i$:
-\[
- \mathbf{p}_i(r) = \mathbf{s}_{i,k} + r\,\hat{n}_k,\quad r\ge 0.
-\]
-Intersect with $z=ax+b$:
-\[
- r_i^* = \frac{a\,s_{i,x} + b - s_{i,z}}{\,n_{k,z} - a\,n_{k,x}\,}, \qquad
- (x_i, z_i) = \mathbf{p}_i(r_i^*).
-\]
-(We also support a numeric march in code; the formula above is exact for the local line.)
+Intersect with the local line `z(x) = a*x + b`.  Write `n_hat_k = (n_x, n_z)` and `s_i_k = (s_x, s_z)`.
 
----
+```
+r_i*   = (a*s_x + b - s_z) / (n_z - a*n_x)
+(x_i, z_i) = p_i(r_i*)
+```
 
-### 5) Feed-forward height and orientation (causal update)
+> The simulator also supports a simple numeric march to the surface; the formula above is exact for the local line representation.
 
-Using the line fitted at frame $k$:
-\[
- z_{\text{pred},k} = a\,x_T + b,\qquad
- z_{\text{cmd},k+1} = z_{\text{pred},k} + h_{\text{off}},\qquad
- (\hat{t}_{k+1},\hat{n}_{k+1}) \leftarrow m_k.
-\]
-The next frame uses the slope from the current beams, keeping the sensor mounting rigid during each frame.
+### 5) Feed‑forward height and orientation (**causal update**)
+Use the line fitted at frame `k` to command the **next** frame, keeping the geometry rigid within each frame:
 
----
+```
+z_pred_k    = a * x_T + b
+z_cmd_{k+1} = z_pred_k + h_off
+(t_hat_{k+1}, n_hat_{k+1})  <-  slope a
+```
 
 ### 6) Distance error (for evaluation or feedback)
 
-\[
- e_k = z_T - \bigl( z_{\text{true}}(x_T) + h_{\text{off}} \bigr).
-\]
+```
+e_k = z_T - ( z_true(x_T) + h_off )
+```
 
----
+RMS/percentile statistics of `e_k` are useful to compare filters and controller settings.
 
-### 7) Optional filters
 
-**Moving average (window $N$):**
-\[
- z^{\text{MA}}[k] = \tfrac{1}{N}\sum_{i=0}^{N-1} z[k-i], \qquad
- \text{group delay} \approx \tfrac{N-1}{2}\text{ frames}.
-\]
 
-**Exponential (EMA):**
-\[
- z^{\text{EMA}}[k] = \alpha\,z[k] + (1-\alpha)\,z^{\text{EMA}}[k-1], \quad 0<\alpha<1.
-\]
 
----
-
-### 8) Curvature note
-
-For true surface $z=f(x)$ with curvature
-\[
- \kappa(x) = \frac{|f''(x)|}{\bigl(1+f'(x)^2\bigr)^{3/2}},
-\]
-and chord length $L=x_2-x_1$, the maximum deviation between arc and chord (your line fit) is approximately
-\[
- \delta_{\max} \approx \frac{\kappa\,L^2}{8}.
-\]
-This sets a bound on stand-off accuracy unless you shorten the lead or add more preview points.
