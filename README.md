@@ -1,6 +1,6 @@
 # Robot Arm Surface‑Tracking Simulator
 
-![](TCP.gif)
+![](tcp.gif)
 
 
 This repository contains a Python/Matplotlib animation that demonstrates a **feed‑forward surface‑following strategy** for a robotic tool centre point (TCP).  Two forward‑looking laser range measurements are used to:
@@ -45,44 +45,114 @@ Press `m` to enable/disable the moving‑average filter applied to each beam mea
 
 ## Underlying mathematics
 
-Below is the minimal geometry used each frame.
+This section summarises the geometry used each frame and makes the **rigid sensor mounting** explicit.
 
-| Symbol             | Meaning                                         |
-| ------------------ | ----------------------------------------------- |
-| (x\_T, z\_T)       | Current TCP coordinate                          |
-| (x1, z1), (x2, z2) | Filtered hit points from laser 1 and laser 2    |
-| d\_lead^(1,2)      | Sensor lead distances (default 5 mm, 10 mm)     |
-| m                  | Local surface slope (dz/dx)                     |
-| t^                 | Unit tangent vector                             |
-| n^                 | Unit surface normal (points toward the surface) |
-| z\_cmd             | Commanded TCP height                            |
-| h\_off             | Desired standoff distance (5 mm)                |
+### Symbols
 
-### Local slope
+| Symbol | Meaning |
+|---|---|
+| $(x_T, z_T)$ | TCP position in the world $(x\!-\!z)$ plane |
+| $\hat{t}_k,\;\hat{n}_k$ | Unit **tangent** and **downward normal** at frame $k$ |
+| $d_1, d_2$ | Rigid leads from TCP to sensor 1 and 2 along $\hat{t}_k$ (e.g., 5 mm, 10 mm) |
+| $\mathbf{s}_{i,k}$ | Sensor-$i$ body position at frame $k$ |
+| $(x_i, z_i)$ | Filtered hit point of beam $i$ on the surface |
+| $m_k$ | Local surface slope (gradient) at frame $k$ |
+| $h_{\text{off}}$ | Desired stand-off (e.g., 5 mm) |
+| $z_{\text{cmd},k}$ | Commanded TCP height |
 
-The surface is assumed locally linear, so a centred difference gives the gradient:
+---
 
-```
- m = (z2 - z1) / (x2 - x1)
-```
+### 1) Local line fit from two hits
 
-### Tangent and normal vectors
+Given filtered hits $(x_1,z_1)$ and $(x_2,z_2)$ with $x_2>x_1$:
+\[
+ z(x) = a x + b,\qquad
+ a = \frac{z_2 - z_1}{x_2 - x_1},\qquad
+ b = z_1 - a x_1.
+\]
+The **gradient** is $m_k \equiv a$.
 
-```
- t_h = (1,  m) / sqrt(1 + m^2)
- n_h = (m, -1) / sqrt(1 + m^2)   # flipped so z-component is negative
-```
+---
 
-### Predicted surface height under the TCP
+### 2) Tangent and (downward) normal
 
-Using the first hit point and the slope:
+\[
+ \hat{t}_k = \frac{(1,\,m_k)}{\sqrt{1+m_k^2}}, \qquad
+ \hat{n}_k = \frac{(m_k,\,-1)}{\sqrt{1+m_k^2}}, \;\; \text{with } (\hat{n}_k)_z<0.
+\]
 
-```
- z_pred = z1 + m * (x_T - x1)
-```
+---
 
-### Height command
+### 3) Rigid sensor kinematics (TCP frame → world)
 
-```
- z_cmd = z_pred + h_off
-```
+Sensors are fixed on the tool along the tangent at frame $k$:
+\[
+ \mathbf{s}_{i,k} =
+ \begin{bmatrix} x_T \\ z_T \end{bmatrix}
+ + d_i\,\hat{t}_k, \qquad i\in\{1,2\}.
+\]
+Each beam is emitted **perpendicular to the tangent**, i.e. along $\hat{n}_k$.
+
+---
+
+### 4) Beam–surface intersection (closed-form on the fitted line)
+
+Beam from sensor $i$:
+\[
+ \mathbf{p}_i(r) = \mathbf{s}_{i,k} + r\,\hat{n}_k,\quad r\ge 0.
+\]
+Intersect with $z=ax+b$:
+\[
+ r_i^* = \frac{a\,s_{i,x} + b - s_{i,z}}{\,n_{k,z} - a\,n_{k,x}\,}, \qquad
+ (x_i, z_i) = \mathbf{p}_i(r_i^*).
+\]
+(We also support a numeric march in code; the formula above is exact for the local line.)
+
+---
+
+### 5) Feed-forward height and orientation (causal update)
+
+Using the line fitted at frame $k$:
+\[
+ z_{\text{pred},k} = a\,x_T + b,\qquad
+ z_{\text{cmd},k+1} = z_{\text{pred},k} + h_{\text{off}},\qquad
+ (\hat{t}_{k+1},\hat{n}_{k+1}) \leftarrow m_k.
+\]
+The next frame uses the slope from the current beams, keeping the sensor mounting rigid during each frame.
+
+---
+
+### 6) Distance error (for evaluation or feedback)
+
+\[
+ e_k = z_T - \bigl( z_{\text{true}}(x_T) + h_{\text{off}} \bigr).
+\]
+
+---
+
+### 7) Optional filters
+
+**Moving average (window $N$):**
+\[
+ z^{\text{MA}}[k] = \tfrac{1}{N}\sum_{i=0}^{N-1} z[k-i], \qquad
+ \text{group delay} \approx \tfrac{N-1}{2}\text{ frames}.
+\]
+
+**Exponential (EMA):**
+\[
+ z^{\text{EMA}}[k] = \alpha\,z[k] + (1-\alpha)\,z^{\text{EMA}}[k-1], \quad 0<\alpha<1.
+\]
+
+---
+
+### 8) Curvature note
+
+For true surface $z=f(x)$ with curvature
+\[
+ \kappa(x) = \frac{|f''(x)|}{\bigl(1+f'(x)^2\bigr)^{3/2}},
+\]
+and chord length $L=x_2-x_1$, the maximum deviation between arc and chord (your line fit) is approximately
+\[
+ \delta_{\max} \approx \frac{\kappa\,L^2}{8}.
+\]
+This sets a bound on stand-off accuracy unless you shorten the lead or add more preview points.
